@@ -4,6 +4,8 @@ use crate::rt::{object, thread, Path};
 use std::collections::HashMap;
 use std::fmt;
 
+use tracing::info;
+
 pub(crate) struct Execution {
     /// Uniquely identifies an execution
     pub(super) id: Id,
@@ -23,9 +25,6 @@ pub(crate) struct Execution {
     pub(super) max_threads: usize,
 
     pub(super) max_history: usize,
-
-    /// Log execution output to STDOUT
-    pub(crate) log: bool,
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
@@ -52,7 +51,6 @@ impl Execution {
             raw_allocations: HashMap::new(),
             max_threads,
             max_history: 7,
-            log: false,
         }
     }
 
@@ -79,7 +77,6 @@ impl Execution {
         let id = Id::new();
         let max_threads = self.max_threads;
         let max_history = self.max_history;
-        let log = self.log;
         let mut path = self.path;
         let mut objects = self.objects;
         let mut raw_allocations = self.raw_allocations;
@@ -103,7 +100,6 @@ impl Execution {
             raw_allocations,
             max_threads,
             max_history,
-            log,
         })
     }
 
@@ -219,8 +215,8 @@ impl Execution {
             }
         }
 
-        if self.log && switched {
-            println!("~~~~~~~~ THREAD {} ~~~~~~~~", self.threads.active_id());
+        if switched {
+            info!("~~~~~~~~ THREAD {} ~~~~~~~~", self.threads.active_id());
         }
 
         curr_thread != self.threads.active_id()

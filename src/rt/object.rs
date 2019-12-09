@@ -1,6 +1,8 @@
 use crate::rt::{alloc, arc, atomic, condvar, execution, mutex, notify};
 use crate::rt::{Access, Execution, VersionVec};
 
+use tracing::trace;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Object {
     /// Index in the store
@@ -212,6 +214,8 @@ impl Object {
     // TODO: rename `branch_disable`
     pub(super) fn branch_acquire(self, is_locked: bool) {
         super::branch(|execution| {
+            trace!(obj = ?self, ?is_locked, "Object::branch_acquire");
+
             self.set_action(execution, Action::Opaque);
 
             if is_locked {
@@ -221,9 +225,13 @@ impl Object {
         })
     }
 
-    pub(super) fn branch<T: Into<Action>>(self, action: T) {
+    pub(super) fn branch<T: Into<Action>>(self, t: T) {
         super::branch(|execution| {
-            self.set_action(execution, action.into());
+            let action = t.into();
+
+            trace!(obj = ?self, ?action, "Object::branch");
+
+            self.set_action(execution, action);
         })
     }
 

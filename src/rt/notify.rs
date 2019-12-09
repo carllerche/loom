@@ -3,6 +3,8 @@ use crate::rt::{self, Access, Synchronize, VersionVec};
 
 use std::sync::atomic::Ordering::{Acquire, Release};
 
+use tracing::trace;
+
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct Notify {
     obj: Object,
@@ -41,6 +43,8 @@ impl Notify {
                 synchronize: Synchronize::new(execution.max_threads),
             });
 
+            trace!(?obj, ?seq_cst, ?spurious, "Notify::new");
+
             Notify { obj }
         })
     }
@@ -72,6 +76,9 @@ impl Notify {
                     .map(|operation| operation.object());
 
                 if obj == Some(self.obj) {
+                    trace!(obj = ?self.obj, thread = ?thread.id,
+                           "Notify::notify");
+
                     thread.unpark(active);
                 }
             }
@@ -92,6 +99,9 @@ impl Notify {
                 state.did_spur = true;
             }
 
+            trace!(obj = ?self.obj, notified = ?state.notified,
+                   ?spurious, "Notify::wait 1");
+
             (state.notified, spurious)
         });
 
@@ -109,6 +119,8 @@ impl Notify {
 
         // Thread was notified
         super::execution(|execution| {
+            trace!(obj = ?self.obj, "Notify::wait 2");
+
             let state = self.get_state(&mut execution.objects);
 
             assert!(state.notified);

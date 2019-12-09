@@ -3,6 +3,8 @@ use crate::rt::{self, thread, Access, Mutex, VersionVec};
 
 use std::collections::VecDeque;
 
+use tracing::trace;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) struct Condvar {
     obj: Object,
@@ -26,6 +28,8 @@ impl Condvar {
                 waiters: VecDeque::new(),
             });
 
+            trace!(?obj, "Condvar::new");
+
             Condvar { obj }
         })
     }
@@ -35,6 +39,8 @@ impl Condvar {
         self.obj.branch_opaque();
 
         rt::execution(|execution| {
+            trace!(obj = ?self.obj, ?mutex, "Condvar::wait");
+
             let state = self.get_state(&mut execution.objects);
 
             // Track the current thread as a waiter
@@ -61,6 +67,8 @@ impl Condvar {
             // Notify the first waiter
             let thread = state.waiters.pop_front();
 
+            trace!(obj = ?self.obj, ?thread, "Condvar::notify_one");
+
             if let Some(thread) = thread {
                 execution.threads.unpark(thread);
             }
@@ -73,6 +81,8 @@ impl Condvar {
 
         rt::execution(|execution| {
             let state = self.get_state(&mut execution.objects);
+
+            trace!(obj = ?self.obj, threads = ?state.waiters, "Condvar::notify_all");
 
             for thread in state.waiters.drain(..) {
                 execution.threads.unpark(thread);

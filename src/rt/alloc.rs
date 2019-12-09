@@ -1,6 +1,8 @@
 use crate::rt;
 use crate::rt::object::Object;
 
+use tracing::trace;
+
 /// Tracks an allocation
 #[derive(Debug)]
 pub(crate) struct Allocation {
@@ -19,6 +21,8 @@ pub(crate) fn alloc(ptr: *mut u8) {
 
         let allocation = Allocation { obj };
 
+        trace!(?obj, ?ptr, "alloc");
+
         let prev = execution.raw_allocations.insert(ptr as usize, allocation);
         assert!(prev.is_none(), "pointer already tracked");
     });
@@ -29,7 +33,11 @@ pub(crate) fn dealloc(ptr: *mut u8) {
     let allocation =
         rt::execution(
             |execution| match execution.raw_allocations.remove(&(ptr as usize)) {
-                Some(allocation) => allocation,
+                Some(allocation) => {
+                    trace!(obj = ?allocation.obj, ?ptr, "dealloc");
+
+                    allocation
+                }
                 None => panic!("pointer not tracked"),
             },
         );
@@ -43,6 +51,8 @@ impl Allocation {
         rt::execution(|execution| {
             let obj = execution.objects.insert_alloc(State { is_dropped: false });
 
+            trace!(?obj, "Allocation::new");
+
             Allocation { obj }
         })
     }
@@ -51,7 +61,10 @@ impl Allocation {
 impl Drop for Allocation {
     fn drop(&mut self) {
         rt::execution(|execution| {
+            trace!(obj = ?self.obj, "Allocation::drop");
+
             let state = self.obj.alloc(&mut execution.objects);
+
             state.is_dropped = true;
         });
     }

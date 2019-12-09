@@ -123,16 +123,6 @@ macro_rules! if_futures {
     }
 }
 
-#[doc(hidden)]
-#[macro_export]
-macro_rules! debug {
-    ($($t:tt)*) => {
-        if $crate::__debug_enabled() {
-            println!($($t)*);
-        }
-    };
-}
-
 macro_rules! dbg {
     ($($t:tt)*) => {
         $($t)*
@@ -151,11 +141,6 @@ pub use crate::model::model;
 
 if_futures! {
     pub mod future;
-}
-
-#[doc(hidden)]
-pub fn __debug_enabled() -> bool {
-    rt::execution(|e| e.log)
 }
 
 /// Mock version of `std::thread_local!`.

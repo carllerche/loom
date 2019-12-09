@@ -3,6 +3,8 @@ use crate::rt::{thread, Access, Synchronize, VersionVec};
 
 use std::sync::atomic::Ordering::{Acquire, Release};
 
+use tracing::trace;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) struct Mutex {
     obj: Object,
@@ -33,6 +35,8 @@ impl Mutex {
                 last_access: None,
                 synchronize: Synchronize::new(execution.max_threads),
             });
+
+            trace!(?obj, ?seq_cst, "Mutex::new");
 
             Mutex { obj }
         })
@@ -77,6 +81,9 @@ impl Mutex {
                     .map(|operation| operation.object());
 
                 if obj == Some(self.obj) {
+                    trace!(obj = ?self.obj, thread = ?id,
+                           "Mutex::release_lock");
+
                     thread.set_runnable();
                 }
             }
@@ -114,6 +121,9 @@ impl Mutex {
                     .map(|operation| operation.object());
 
                 if obj == Some(self.obj) {
+                    trace!(obj = ?self.obj, thread = ?id,
+                           "Mutex::post_acquire");
+
                     thread.set_blocked();
                 }
             }
@@ -124,7 +134,13 @@ impl Mutex {
 
     /// Returns `true` if the mutex is currently locked
     fn is_locked(&self) -> bool {
-        super::execution(|execution| self.get_state(&mut execution.objects).lock.is_some())
+        super::execution(|execution| {
+            let is_locked = self.get_state(&mut execution.objects).lock.is_some();
+
+            trace!(obj = ?self.obj, ?is_locked, "Mutex::is_locked");
+
+            is_locked
+        })
     }
 
     fn get_state<'a>(&self, objects: &'a mut object::Store) -> &'a mut State {

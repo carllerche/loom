@@ -38,12 +38,16 @@ pub(crate) mod thread;
 mod vv;
 pub(crate) use self::vv::VersionVec;
 
+use tracing::trace;
+
 pub fn spawn<F>(f: F)
 where
     F: FnOnce() + 'static,
 {
     execution(|execution| {
-        execution.new_thread();
+        let thread = execution.new_thread();
+
+        trace!(?thread, "spawn");
     });
 
     Scheduler::spawn(Box::new(move || {
@@ -55,6 +59,10 @@ where
 /// Marks the current thread as blocked
 pub fn park() {
     execution(|execution| {
+        let thread = execution.threads.active_id();
+
+        trace!(?thread, "park");
+
         execution.threads.active_mut().set_blocked();
         execution.threads.active_mut().operation = None;
         execution.schedule()
@@ -70,7 +78,11 @@ where
 {
     let (ret, switch) = execution(|execution| {
         let ret = f(execution);
-        (ret, execution.schedule())
+        let switch = execution.schedule();
+
+        trace!(?switch, "branch");
+
+        (ret, switch)
     });
 
     if switch {
@@ -85,6 +97,8 @@ where
     F: FnOnce(&mut Execution) -> R,
 {
     execution(|execution| {
+        trace!("synchronize");
+
         let ret = f(execution);
         execution.threads.active_causality_inc();
         ret
@@ -97,9 +111,15 @@ where
 /// progress.
 pub fn yield_now() {
     let switch = execution(|execution| {
+        let thread = execution.threads.active_id();
+
         execution.threads.active_mut().set_yield();
         execution.threads.active_mut().operation = None;
-        execution.schedule()
+        let switch = execution.schedule();
+
+        trace!(?thread, ?switch, "yield_now");
+
+        switch
     });
 
     if switch {
@@ -117,6 +137,8 @@ where
     impl Drop for Reset {
         fn drop(&mut self) {
             execution(|execution| {
+                trace!("unset critical");
+
                 execution.unset_critical();
             });
         }
@@ -125,6 +147,8 @@ where
     let _reset = Reset;
 
     execution(|execution| {
+        trace!("set critical");
+
         execution.set_critical();
     });
 
@@ -139,14 +163,26 @@ where
 }
 
 pub fn thread_done() {
-    let locals = execution(|execution| execution.threads.active_mut().drop_locals());
+    let locals = execution(|execution| {
+        let thread = execution.threads.active_id();
+
+        trace!(?thread, "thread_done: drop locals");
+
+        execution.threads.active_mut().drop_locals()
+    });
 
     // Drop outside of the execution context
     drop(locals);
 
     execution(|execution| {
+        let thread = execution.threads.active_id();
+
         execution.threads.active_mut().operation = None;
         execution.threads.active_mut().set_terminated();
-        execution.schedule();
+        let switch = execution.schedule();
+
+        trace!(?thread, ?switch, "thread_done: terminate");
+
+        switch
     });
 }

@@ -4,6 +4,8 @@ use crate::rt::{self, thread, Access, Path, Synchronize, VersionVec};
 use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering::Acquire;
 
+use tracing::trace;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) struct Atomic {
     obj: Object,
@@ -62,6 +64,8 @@ impl Atomic {
 
             let obj = execution.objects.insert_atomic(state);
 
+            trace!(?obj, "Atomic::new");
+
             Atomic { obj }
         })
     }
@@ -70,6 +74,8 @@ impl Atomic {
         self.obj.branch(Action::Load);
 
         super::synchronize(|execution| {
+            trace!(obj = ?self.obj, ?order, "Atomic::load");
+
             self.obj.atomic_mut(&mut execution.objects).unwrap().load(
                 &mut execution.path,
                 &mut execution.threads,
@@ -82,6 +88,8 @@ impl Atomic {
         self.obj.branch(Action::Store);
 
         super::synchronize(|execution| {
+            trace!(obj = ?self.obj, ?order, "Atomic::store");
+
             self.obj
                 .atomic_mut(&mut execution.objects)
                 .unwrap()
@@ -96,6 +104,8 @@ impl Atomic {
         self.obj.branch(Action::Rmw);
 
         super::synchronize(|execution| {
+            trace!(obj = ?self.obj, ?success, ?failure, "Atomic::rmw");
+
             self.obj.atomic_mut(&mut execution.objects).unwrap().rmw(
                 f,
                 &mut execution.threads,
@@ -112,6 +122,8 @@ impl Atomic {
         self.obj.branch(Action::Rmw);
 
         super::execution(|execution| {
+            trace!(obj = ?self.obj, "Atomic::get_mut");
+
             self.obj
                 .atomic_mut(&mut execution.objects)
                 .unwrap()
@@ -127,6 +139,8 @@ pub(crate) fn fence(order: Ordering) {
     );
 
     rt::synchronize(|execution| {
+        trace!(?order, "fence");
+
         // Find all stores for all atomic objects and, if they have been read by
         // the current thread, establish an acquire synchronization.
         for state in execution.objects.atomics_mut() {
