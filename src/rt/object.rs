@@ -1,5 +1,6 @@
-use crate::rt::{alloc, arc, atomic, condvar, execution, mutex, notify};
+use crate::rt::{alloc, arc, atomic, causal, condvar, execution, mutex, notify};
 use crate::rt::{Access, Execution, VersionVec};
+use bumpalo::{collections::vec::Vec as BumpVec, Bump};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Object {
@@ -10,26 +11,55 @@ pub struct Object {
     execution_id: execution::Id,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct CausalCellRef {
+    /// Index in the causal_cells vec
+    index: usize,
+
+    /// Execution the object is part of
+    execution_id: execution::Id,
+}
+
 /// Stores objects
 #[derive(Debug)]
-pub struct Store {
+pub struct Store<'bump> {
     /// Execution this store is part of
     execution_id: execution::Id,
 
     /// Stored state for all objects.
-    entries: Vec<Entry>,
+    entries: BumpVec<'bump, Entry<'bump>>,
+
+    /// Stored state for CausalCells
+    causal_cells: BumpVec<'bump, causal::State<'bump>>,
+
+    /// Bump allocator
+    bump: &'bump Bump,
+}
+
+impl Drop for Store<'_> {
+    fn drop(&mut self) {
+        // BumpVec won't drop its elements so we need to drop them manually because e.g.
+        // condvar::State contains a VecDeque allocated on the heap so the drop is non-trivial.
+        for object in self.entries.drain(..) {
+            drop(object);
+        }
+
+        for object in self.causal_cells.drain(..) {
+            drop(object);
+        }
+    }
 }
 
 /// Entry in the object store. Enumerates the different kinds of objects that
 /// can be stored.
 #[derive(Debug)]
-enum Entry {
+enum Entry<'bump> {
     Alloc(alloc::State),
-    Arc(arc::State),
-    Atomic(atomic::State),
-    Mutex(mutex::State),
-    Condvar(condvar::State),
-    Notify(notify::State),
+    Arc(arc::State<'bump>),
+    Atomic(atomic::State<'bump>),
+    Mutex(mutex::State<'bump>),
+    Condvar(condvar::State<'bump>),
+    Notify(notify::State<'bump>),
 }
 
 // TODO: mov to separate file
@@ -53,7 +83,7 @@ pub(super) enum Action {
 }
 
 impl Object {
-    pub(super) fn alloc(self, store: &mut Store) -> &mut alloc::State {
+    pub(super) fn alloc<'a>(self, store: &'a mut Store<'_>) -> &'a mut alloc::State {
         assert_eq!(self.execution_id, store.execution_id);
 
         match &mut store.entries[self.index] {
@@ -62,7 +92,7 @@ impl Object {
         }
     }
 
-    pub(super) fn arc_mut(self, store: &mut Store) -> &mut arc::State {
+    pub(super) fn arc_mut<'a, 'b>(self, store: &'a mut Store<'b>) -> &'a mut arc::State<'b> {
         assert_eq!(self.execution_id, store.execution_id);
 
         match &mut store.entries[self.index] {
@@ -71,7 +101,10 @@ impl Object {
         }
     }
 
-    pub(super) fn atomic_mut(self, store: &mut Store) -> Option<&mut atomic::State> {
+    pub(super) fn atomic_mut<'a, 'b>(
+        self,
+        store: &'a mut Store<'b>,
+    ) -> Option<&'a mut atomic::State<'b>> {
         assert_eq!(self.execution_id, store.execution_id);
 
         match &mut store.entries[self.index] {
@@ -80,7 +113,10 @@ impl Object {
         }
     }
 
-    pub(super) fn condvar_mut(self, store: &mut Store) -> Option<&mut condvar::State> {
+    pub(super) fn condvar_mut<'a, 'b>(
+        self,
+        store: &'a mut Store<'b>,
+    ) -> Option<&'a mut condvar::State<'b>> {
         assert_eq!(self.execution_id, store.execution_id);
 
         match &mut store.entries[self.index] {
@@ -89,7 +125,10 @@ impl Object {
         }
     }
 
-    pub(super) fn mutex_mut(self, store: &mut Store) -> Option<&mut mutex::State> {
+    pub(super) fn mutex_mut<'a, 'b>(
+        self,
+        store: &'a mut Store<'b>,
+    ) -> Option<&'a mut mutex::State<'b>> {
         assert_eq!(self.execution_id, store.execution_id);
 
         match &mut store.entries[self.index] {
@@ -98,7 +137,10 @@ impl Object {
         }
     }
 
-    pub(super) fn notify_mut(self, store: &mut Store) -> Option<&mut notify::State> {
+    pub(super) fn notify_mut<'a, 'b>(
+        self,
+        store: &'a mut Store<'b>,
+    ) -> Option<&'a mut notify::State<'b>> {
         assert_eq!(self.execution_id, store.execution_id);
 
         match &mut store.entries[self.index] {
@@ -108,12 +150,21 @@ impl Object {
     }
 }
 
-impl Store {
+impl CausalCellRef {
+    pub(super) fn get_mut<'a, 'b>(self, store: &'a mut Store<'b>) -> &'a mut causal::State<'b> {
+        assert_eq!(self.execution_id, store.execution_id);
+        &mut store.causal_cells[self.index]
+    }
+}
+
+impl<'bump> Store<'bump> {
     /// Create a new, empty, object store
-    pub(super) fn new(execution_id: execution::Id) -> Store {
+    pub(super) fn new(execution_id: execution::Id, bump: &Bump) -> Store<'_> {
         Store {
             execution_id,
-            entries: vec![],
+            entries: BumpVec::new_in(bump),
+            causal_cells: BumpVec::new_in(bump),
+            bump,
         }
     }
 
@@ -123,17 +174,17 @@ impl Store {
     }
 
     /// Insert a new arc object into the store.
-    pub(super) fn insert_arc(&mut self, state: arc::State) -> Object {
+    pub(super) fn insert_arc(&mut self, state: arc::State<'bump>) -> Object {
         self.insert(Entry::Arc(state))
     }
 
     /// Insert a new atomic object into the store.
-    pub(super) fn insert_atomic(&mut self, state: atomic::State) -> Object {
+    pub(super) fn insert_atomic(&mut self, state: atomic::State<'bump>) -> Object {
         self.insert(Entry::Atomic(state))
     }
 
     /// Iterate all atomic objects
-    pub(super) fn atomics_mut(&mut self) -> impl Iterator<Item = &mut atomic::State> {
+    pub(super) fn atomics_mut(&mut self) -> impl Iterator<Item = &mut atomic::State<'bump>> {
         self.entries.iter_mut().filter_map(|entry| match entry {
             Entry::Atomic(entry) => Some(entry),
             _ => None,
@@ -141,21 +192,21 @@ impl Store {
     }
 
     /// Insert a new mutex object into the store.
-    pub(super) fn insert_mutex(&mut self, state: mutex::State) -> Object {
+    pub(super) fn insert_mutex(&mut self, state: mutex::State<'bump>) -> Object {
         self.insert(Entry::Mutex(state))
     }
 
     /// Insert a new condition variable object into the store
-    pub(super) fn insert_condvar(&mut self, state: condvar::State) -> Object {
+    pub(super) fn insert_condvar(&mut self, state: condvar::State<'bump>) -> Object {
         self.insert(Entry::Condvar(state))
     }
 
     /// Inserts a new notify object into the store
-    pub(super) fn insert_notify(&mut self, state: notify::State) -> Object {
+    pub(super) fn insert_notify(&mut self, state: notify::State<'bump>) -> Object {
         self.insert(Entry::Notify(state))
     }
 
-    fn insert(&mut self, entry: Entry) -> Object {
+    fn insert(&mut self, entry: Entry<'bump>) -> Object {
         let index = self.entries.len();
         self.entries.push(entry);
 
@@ -165,7 +216,17 @@ impl Store {
         }
     }
 
-    pub(super) fn last_dependent_access(&self, operation: Operation) -> Option<&Access> {
+    pub(super) fn insert_causal_cell(&mut self, state: causal::State<'bump>) -> CausalCellRef {
+        let index = self.causal_cells.len();
+        self.causal_cells.push(state);
+
+        CausalCellRef {
+            index,
+            execution_id: self.execution_id,
+        }
+    }
+
+    pub(super) fn last_dependent_access(&self, operation: Operation) -> Option<&Access<'bump>> {
         match &self.entries[operation.obj.index] {
             Entry::Alloc(_) => panic!("allocations are not branchable operations"),
             Entry::Arc(entry) => entry.last_dependent_access(operation.action.into()),
@@ -180,20 +241,18 @@ impl Store {
         &mut self,
         operation: Operation,
         path_id: usize,
-        dpor_vv: &VersionVec,
+        dpor_vv: &VersionVec<'_>,
     ) {
         match &mut self.entries[operation.obj.index] {
             Entry::Alloc(_) => panic!("allocations are not branchable operations"),
-            Entry::Arc(entry) => entry.set_last_access(operation.action.into(), path_id, dpor_vv),
-            Entry::Atomic(entry) => entry.set_last_access(path_id, dpor_vv),
-            Entry::Mutex(entry) => entry.set_last_access(path_id, dpor_vv),
-            Entry::Condvar(entry) => entry.set_last_access(path_id, dpor_vv),
-            Entry::Notify(entry) => entry.set_last_access(path_id, dpor_vv),
+            Entry::Arc(entry) => {
+                entry.set_last_access(operation.action.into(), path_id, dpor_vv, self.bump)
+            }
+            Entry::Atomic(entry) => entry.set_last_access(path_id, dpor_vv, self.bump),
+            Entry::Mutex(entry) => entry.set_last_access(path_id, dpor_vv, self.bump),
+            Entry::Condvar(entry) => entry.set_last_access(path_id, dpor_vv, self.bump),
+            Entry::Notify(entry) => entry.set_last_access(path_id, dpor_vv, self.bump),
         }
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.entries.clear();
     }
 
     /// Panics if any leaks were detected
@@ -231,7 +290,7 @@ impl Object {
         self.branch(Action::Opaque)
     }
 
-    fn set_action(self, execution: &mut Execution, action: Action) {
+    fn set_action(self, execution: &mut Execution<'_>, action: Action) {
         execution.threads.active_mut().operation = Some(Operation { obj: self, action });
     }
 }

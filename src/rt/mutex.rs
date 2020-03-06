@@ -1,6 +1,7 @@
 use crate::rt::object::{self, Object};
 use crate::rt::{thread, Access, Synchronize, VersionVec};
 
+use bumpalo::Bump;
 use std::sync::atomic::Ordering::{Acquire, Release};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -9,7 +10,7 @@ pub(crate) struct Mutex {
 }
 
 #[derive(Debug)]
-pub(super) struct State {
+pub(super) struct State<'bump> {
     /// If the mutex should establish sequential consistency.
     seq_cst: bool,
 
@@ -18,10 +19,10 @@ pub(super) struct State {
     lock: Option<thread::Id>,
 
     /// Tracks access to the mutex
-    last_access: Option<Access>,
+    last_access: Option<Access<'bump>>,
 
     /// Causality transfers between threads
-    synchronize: Synchronize,
+    synchronize: Synchronize<'bump>,
 }
 
 impl Mutex {
@@ -31,7 +32,7 @@ impl Mutex {
                 seq_cst,
                 lock: None,
                 last_access: None,
-                synchronize: Synchronize::new(execution.max_threads),
+                synchronize: Synchronize::new(execution.max_threads, execution.bump),
             });
 
             Mutex { obj }
@@ -127,17 +128,22 @@ impl Mutex {
         super::execution(|execution| self.get_state(&mut execution.objects).lock.is_some())
     }
 
-    fn get_state<'a>(&self, objects: &'a mut object::Store) -> &'a mut State {
+    fn get_state<'a, 'bump>(&self, objects: &'a mut object::Store<'bump>) -> &'a mut State<'bump> {
         self.obj.mutex_mut(objects).unwrap()
     }
 }
 
-impl State {
-    pub(crate) fn last_dependent_access(&self) -> Option<&Access> {
+impl<'bump> State<'bump> {
+    pub(crate) fn last_dependent_access(&self) -> Option<&Access<'bump>> {
         self.last_access.as_ref()
     }
 
-    pub(crate) fn set_last_access(&mut self, path_id: usize, version: &VersionVec) {
-        Access::set_or_create(&mut self.last_access, path_id, version);
+    pub(crate) fn set_last_access(
+        &mut self,
+        path_id: usize,
+        version: &VersionVec<'_>,
+        bump: &'bump Bump,
+    ) {
+        Access::set_or_create_in(&mut self.last_access, path_id, version, bump);
     }
 }

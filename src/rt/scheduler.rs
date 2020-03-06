@@ -20,11 +20,11 @@ pub(crate) struct Scheduler {
 type Thread = Generator<'static, Option<Box<dyn FnOnce()>>, ()>;
 
 scoped_thread_local! {
-    static STATE: RefCell<State<'_>>
+    static STATE: RefCell<State<'_, '_>>
 }
 
-struct State<'a> {
-    execution: &'a mut Execution,
+struct State<'a, 'b> {
+    execution: &'a mut Execution<'b>,
     queued_spawn: &'a mut VecDeque<Box<dyn FnOnce()>>,
 }
 
@@ -43,7 +43,7 @@ impl Scheduler {
     /// Access the execution
     pub(crate) fn with_execution<F, R>(f: F) -> R
     where
-        F: FnOnce(&mut Execution) -> R,
+        F: FnOnce(&mut Execution<'_>) -> R,
     {
         STATE.with(|state| f(&mut state.borrow_mut().execution))
     }
@@ -81,7 +81,7 @@ impl Scheduler {
         });
     }
 
-    pub(crate) fn run<F>(&mut self, execution: &mut Execution, f: F)
+    pub(crate) fn run<F>(&mut self, execution: &mut Execution<'_>, f: F)
     where
         F: FnOnce() + Send + 'static,
     {
@@ -108,7 +108,7 @@ impl Scheduler {
         }
     }
 
-    fn tick(&mut self, thread: thread::Id, execution: &mut Execution) {
+    fn tick(&mut self, thread: thread::Id, execution: &mut Execution<'_>) {
         let state = RefCell::new(State {
             execution: execution,
             queued_spawn: &mut self.queued_spawn,
@@ -148,6 +148,8 @@ fn spawn_threads(n: usize) -> Vec<Thread> {
         .collect()
 }
 
-unsafe fn transmute_lt<'a, 'b>(state: &'a RefCell<State<'b>>) -> &'a RefCell<State<'static>> {
+unsafe fn transmute_lt<'a>(
+    state: &'a RefCell<State<'_, '_>>,
+) -> &'a RefCell<State<'static, 'static>> {
     ::std::mem::transmute(state)
 }

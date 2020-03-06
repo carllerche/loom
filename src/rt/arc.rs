@@ -1,6 +1,7 @@
 use crate::rt::object::Object;
 use crate::rt::{self, Access, Backtrace, Synchronize, VersionVec};
 
+use bumpalo::Bump;
 use std::sync::atomic::Ordering::{Acquire, Release};
 
 #[derive(Debug, Copy, Clone)]
@@ -9,7 +10,7 @@ pub(crate) struct Arc {
 }
 
 #[derive(Debug)]
-pub(super) struct State {
+pub(super) struct State<'bump> {
     /// Reference count
     ref_cnt: usize,
 
@@ -19,11 +20,11 @@ pub(super) struct State {
     /// Causality transfers between threads
     ///
     /// Only updated on on ref dec and acquired before drop
-    synchronize: Synchronize,
+    synchronize: Synchronize<'bump>,
 
     /// Tracks access to the arc object
-    last_ref_inc: Option<Access>,
-    last_ref_dec: Option<Access>,
+    last_ref_inc: Option<Access<'bump>>,
+    last_ref_dec: Option<Access<'bump>>,
 }
 
 /// Actions performed on the Arc
@@ -50,7 +51,7 @@ impl Arc {
             let obj = execution.objects.insert_arc(State {
                 ref_cnt: 1,
                 allocated: execution.backtrace(),
-                synchronize: Synchronize::new(execution.max_threads),
+                synchronize: Synchronize::new(execution.max_threads, execution.bump),
                 last_ref_inc: None,
                 last_ref_dec: None,
             });
@@ -119,7 +120,7 @@ impl Arc {
     }
 }
 
-impl State {
+impl<'bump> State<'bump> {
     pub(super) fn check_for_leaks(&self) {
         if self.ref_cnt != 0 {
             if let Some(backtrace) = &self.allocated {
@@ -133,7 +134,7 @@ impl State {
         }
     }
 
-    pub(super) fn last_dependent_access(&self, action: Action) -> Option<&Access> {
+    pub(super) fn last_dependent_access(&self, action: Action) -> Option<&Access<'bump>> {
         match action {
             // RefIncs are not dependent w/ RefDec, only inspections
             Action::RefInc => None,
@@ -141,10 +142,20 @@ impl State {
         }
     }
 
-    pub(super) fn set_last_access(&mut self, action: Action, path_id: usize, version: &VersionVec) {
+    pub(super) fn set_last_access(
+        &mut self,
+        action: Action,
+        path_id: usize,
+        version: &VersionVec<'_>,
+        bump: &'bump Bump,
+    ) {
         match action {
-            Action::RefInc => Access::set_or_create(&mut self.last_ref_inc, path_id, version),
-            Action::RefDec => Access::set_or_create(&mut self.last_ref_dec, path_id, version),
+            Action::RefInc => {
+                Access::set_or_create_in(&mut self.last_ref_inc, path_id, version, bump)
+            }
+            Action::RefDec => {
+                Access::set_or_create_in(&mut self.last_ref_dec, path_id, version, bump)
+            }
         }
     }
 }

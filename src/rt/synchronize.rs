@@ -1,5 +1,6 @@
 use crate::rt::{thread, VersionVec};
 
+use bumpalo::Bump;
 use std::sync::atomic::Ordering::{self, *};
 
 /// A synchronization point between two threads.
@@ -8,23 +9,29 @@ use std::sync::atomic::Ordering::{self, *};
 /// loads, the thread's causality is updated using the synchronization point's
 /// stored causality. On stores, the synchronization point's causality is
 /// updated with the threads.
-#[derive(Debug, Clone)]
-pub(crate) struct Synchronize {
-    happens_before: VersionVec,
+#[derive(Debug)]
+pub(crate) struct Synchronize<'bump> {
+    happens_before: VersionVec<'bump>,
 }
 
-impl Synchronize {
-    pub fn new(max_threads: usize) -> Self {
-        let happens_before = VersionVec::new(max_threads);
+impl<'bump> Synchronize<'bump> {
+    pub fn new(max_threads: usize, bump: &'bump Bump) -> Self {
+        let happens_before = VersionVec::new_in(max_threads, bump);
 
         Synchronize { happens_before }
     }
 
-    pub fn version_vec(&self) -> &VersionVec {
+    pub fn clone_in(&self, bump: &'bump Bump) -> Self {
+        let mut res = Self::new(self.happens_before.len(), bump);
+        res.happens_before.set(&self.happens_before);
+        res
+    }
+
+    pub fn version_vec(&self) -> &VersionVec<'_> {
         &self.happens_before
     }
 
-    pub fn sync_load(&mut self, threads: &mut thread::Set, order: Ordering) {
+    pub fn sync_load(&mut self, threads: &mut thread::Set<'_>, order: Ordering) {
         match order {
             Relaxed | Release => {
                 // Nothing happens!
@@ -40,7 +47,7 @@ impl Synchronize {
         }
     }
 
-    pub fn sync_store(&mut self, threads: &mut thread::Set, order: Ordering) {
+    pub fn sync_store(&mut self, threads: &mut thread::Set<'_>, order: Ordering) {
         match order {
             Relaxed | Acquire => {
                 // Nothing happens!
@@ -56,11 +63,11 @@ impl Synchronize {
         }
     }
 
-    fn sync_acq(&mut self, threads: &mut thread::Set) {
+    fn sync_acq(&mut self, threads: &mut thread::Set<'_>) {
         threads.active_mut().causality.join(&self.happens_before);
     }
 
-    fn sync_rel(&mut self, threads: &thread::Set) {
+    fn sync_rel(&mut self, threads: &thread::Set<'_>) {
         self.happens_before.join(&threads.active().causality);
     }
 }

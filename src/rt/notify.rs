@@ -1,6 +1,7 @@
 use crate::rt::object::{self, Object};
 use crate::rt::{self, Access, Synchronize, VersionVec};
 
+use bumpalo::Bump;
 use std::sync::atomic::Ordering::{Acquire, Release};
 
 #[derive(Debug, Copy, Clone)]
@@ -9,7 +10,7 @@ pub(crate) struct Notify {
 }
 
 #[derive(Debug)]
-pub(super) struct State {
+pub(super) struct State<'bump> {
     /// If true, spurious notifications are possible
     spurious: bool,
 
@@ -23,10 +24,10 @@ pub(super) struct State {
     notified: bool,
 
     /// Tracks access to the notify object
-    last_access: Option<Access>,
+    last_access: Option<Access<'bump>>,
 
     /// Causality transfers between threads
-    synchronize: Synchronize,
+    synchronize: Synchronize<'bump>,
 }
 
 impl Notify {
@@ -38,7 +39,7 @@ impl Notify {
                 seq_cst,
                 notified: false,
                 last_access: None,
-                synchronize: Synchronize::new(execution.max_threads),
+                synchronize: Synchronize::new(execution.max_threads, execution.bump),
             });
 
             Notify { obj }
@@ -124,17 +125,22 @@ impl Notify {
         });
     }
 
-    fn get_state<'a>(self, store: &'a mut object::Store) -> &'a mut State {
+    fn get_state<'a, 'bump: 'a>(self, store: &'a mut object::Store<'bump>) -> &'a mut State<'bump> {
         self.obj.notify_mut(store).unwrap()
     }
 }
 
-impl State {
-    pub(crate) fn last_dependent_access(&self) -> Option<&Access> {
+impl<'bump> State<'bump> {
+    pub(crate) fn last_dependent_access(&self) -> Option<&Access<'bump>> {
         self.last_access.as_ref()
     }
 
-    pub(crate) fn set_last_access(&mut self, path_id: usize, version: &VersionVec) {
-        Access::set_or_create(&mut self.last_access, path_id, version);
+    pub(crate) fn set_last_access(
+        &mut self,
+        path_id: usize,
+        version: &VersionVec<'_>,
+        bump: &'bump Bump,
+    ) {
+        Access::set_or_create_in(&mut self.last_access, path_id, version, bump);
     }
 }

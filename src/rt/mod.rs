@@ -27,6 +27,9 @@ pub(crate) mod object;
 mod mutex;
 pub(crate) use self::mutex::Mutex;
 
+mod causal;
+pub(crate) use self::causal::{CausalCell, CausalCheck};
+
 mod path;
 pub(crate) use self::path::Path;
 
@@ -69,7 +72,7 @@ pub fn park() {
 /// Add an execution branch point.
 fn branch<F, R>(f: F) -> R
 where
-    F: FnOnce(&mut Execution) -> R,
+    F: FnOnce(&mut Execution<'_>) -> R,
 {
     let (ret, switch) = execution(|execution| {
         let ret = f(execution);
@@ -85,7 +88,7 @@ where
 
 fn synchronize<F, R>(f: F) -> R
 where
-    F: FnOnce(&mut Execution) -> R,
+    F: FnOnce(&mut Execution<'_>) -> R,
 {
     execution(|execution| {
         let ret = f(execution);
@@ -136,7 +139,7 @@ where
 
 pub(crate) fn execution<F, R>(f: F) -> R
 where
-    F: FnOnce(&mut Execution) -> R,
+    F: FnOnce(&mut Execution<'_>) -> R,
 {
     Scheduler::with_execution(f)
 }

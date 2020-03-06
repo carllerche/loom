@@ -1,6 +1,7 @@
 use crate::rt::object::{self, Object};
 use crate::rt::{self, thread, Access, Mutex, VersionVec};
 
+use bumpalo::Bump;
 use std::collections::VecDeque;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -9,12 +10,12 @@ pub(crate) struct Condvar {
 }
 
 #[derive(Debug)]
-pub(super) struct State {
+pub(super) struct State<'bump> {
     /// Tracks access to the mutex
-    last_access: Option<Access>,
+    last_access: Option<Access<'bump>>,
 
     /// Threads waiting on the condvar
-    waiters: VecDeque<thread::Id>,
+    pub(crate) waiters: VecDeque<thread::Id>,
 }
 
 impl Condvar {
@@ -80,17 +81,22 @@ impl Condvar {
         })
     }
 
-    fn get_state<'a>(&self, store: &'a mut object::Store) -> &'a mut State {
+    fn get_state<'a, 'bump>(&self, store: &'a mut object::Store<'bump>) -> &'a mut State<'bump> {
         self.obj.condvar_mut(store).unwrap()
     }
 }
 
-impl State {
-    pub(super) fn last_dependent_access(&self) -> Option<&Access> {
+impl<'bump> State<'bump> {
+    pub(super) fn last_dependent_access(&self) -> Option<&Access<'bump>> {
         self.last_access.as_ref()
     }
 
-    pub(crate) fn set_last_access(&mut self, path_id: usize, version: &VersionVec) {
-        Access::set_or_create(&mut self.last_access, path_id, version);
+    pub(crate) fn set_last_access(
+        &mut self,
+        path_id: usize,
+        version: &VersionVec<'_>,
+        bump: &'bump Bump,
+    ) {
+        Access::set_or_create_in(&mut self.last_access, path_id, version, bump);
     }
 }

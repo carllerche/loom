@@ -1,28 +1,29 @@
 use crate::rt::alloc::Allocation;
 use crate::rt::{object, thread, Backtrace, Path};
 
+use bumpalo::Bump;
 use std::collections::HashMap;
 use std::fmt;
 
-pub(crate) struct Execution {
+pub(crate) struct Execution<'bump> {
     /// Uniquely identifies an execution
     pub(super) id: Id,
 
     /// Execution path taken
-    pub(crate) path: Path,
+    pub(crate) path: &'bump mut Path,
 
-    pub(crate) threads: thread::Set,
+    pub(crate) bump: &'bump Bump,
+
+    pub(crate) threads: thread::Set<'bump>,
 
     /// All loom aware objects part of this execution run.
-    pub(super) objects: object::Store,
+    pub(super) objects: object::Store<'bump>,
 
     /// Maps raw allocations to LeakTrack objects
     pub(super) raw_allocations: HashMap<usize, Allocation>,
 
     /// Maximum number of concurrent threads
     pub(super) max_threads: usize,
-
-    pub(super) max_history: usize,
 
     /// Capture backtraces for significant events
     pub(crate) backtrace: bool,
@@ -34,27 +35,20 @@ pub(crate) struct Execution {
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
 pub(crate) struct Id(usize);
 
-impl Execution {
-    /// Create a new execution.
-    ///
-    /// This is only called at the start of a fuzz run. The same instance is
-    /// reused across permutations.
-    pub(crate) fn new(
-        max_threads: usize,
-        max_branches: usize,
-        preemption_bound: Option<usize>,
-    ) -> Execution {
+impl<'bump> Execution<'bump> {
+    /// Create a new execution at the start of each iteration
+    pub(crate) fn new(max_threads: usize, path: &'bump mut Path, bump: &'bump Bump) -> Self {
         let id = Id::new();
-        let threads = thread::Set::new(id, max_threads);
+        let threads = thread::Set::new(id, max_threads, bump);
 
         Execution {
             id,
-            path: Path::new(max_branches, preemption_bound),
+            path,
+            bump,
             threads,
-            objects: object::Store::new(id),
+            objects: object::Store::new(id, bump),
             raw_allocations: HashMap::new(),
             max_threads,
-            max_history: 7,
             backtrace: false,
             log: false,
         }
@@ -76,41 +70,6 @@ impl Execution {
         active.causality[active_id] += 1;
 
         thread_id
-    }
-
-    /// Resets the execution state for the next execution run
-    pub(crate) fn step(self) -> Option<Self> {
-        let id = Id::new();
-        let max_threads = self.max_threads;
-        let max_history = self.max_history;
-        let backtrace = self.backtrace;
-        let log = self.log;
-        let mut path = self.path;
-        let mut objects = self.objects;
-        let mut raw_allocations = self.raw_allocations;
-
-        let mut threads = self.threads;
-
-        objects.clear();
-        raw_allocations.clear();
-
-        if !path.step() {
-            return None;
-        }
-
-        threads.clear(id);
-
-        Some(Execution {
-            id,
-            path,
-            threads,
-            objects,
-            raw_allocations,
-            max_threads,
-            max_history,
-            backtrace,
-            log,
-        })
     }
 
     /// Returns `true` if a switch is required
@@ -256,7 +215,7 @@ impl Execution {
     }
 }
 
-impl fmt::Debug for Execution {
+impl<'a> fmt::Debug for Execution<'a> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Execution")
             .field("path", &self.path)

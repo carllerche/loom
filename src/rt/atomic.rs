@@ -1,6 +1,7 @@
 use crate::rt::object::Object;
 use crate::rt::{self, thread, Access, Path, Synchronize, VersionVec};
 
+use bumpalo::{collections::vec::Vec as BumpVec, Bump};
 use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering::Acquire;
 
@@ -9,10 +10,10 @@ pub(crate) struct Atomic {
     obj: Object,
 }
 
-#[derive(Debug, Default)]
-pub(super) struct State {
-    last_access: Option<Access>,
-    history: History,
+#[derive(Debug)]
+pub(super) struct State<'bump> {
+    last_access: Option<Access<'bump>>,
+    history: History<'bump>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -27,36 +28,47 @@ pub(super) enum Action {
     Rmw,
 }
 
-#[derive(Debug, Default)]
-struct History {
-    stores: Vec<Store>,
+#[derive(Debug)]
+struct History<'bump> {
+    stores: BumpVec<'bump, Store<'bump>>,
+}
+
+impl History<'_> {
+    fn new(bump: &Bump) -> History<'_> {
+        History {
+            stores: BumpVec::new_in(bump),
+        }
+    }
 }
 
 #[derive(Debug)]
-struct Store {
+struct Store<'bump> {
     /// Manages causality transfers between threads
-    sync: Synchronize,
+    sync: Synchronize<'bump>,
 
     /// Tracks when each thread first saw value
-    first_seen: FirstSeen,
+    first_seen: FirstSeen<'bump>,
 
     /// True when the store was done with `SeqCst` ordering
     seq_cst: bool,
 }
 
 #[derive(Debug)]
-struct FirstSeen(Vec<Option<usize>>);
+struct FirstSeen<'bump>(BumpVec<'bump, Option<usize>>);
 
 impl Atomic {
     pub(crate) fn new() -> Atomic {
         rt::execution(|execution| {
-            let mut state = State::default();
+            let mut state = State {
+                last_access: None,
+                history: History::new(execution.bump),
+            };
 
             // All atomics are initialized with a value, which brings the causality
             // of the thread initializing the atomic.
             state.history.stores.push(Store {
-                sync: Synchronize::new(execution.threads.max()),
-                first_seen: FirstSeen::new(&mut execution.threads),
+                sync: Synchronize::new(execution.max_threads, execution.bump),
+                first_seen: FirstSeen::new(&mut execution.threads, execution.bump),
                 seq_cst: false,
             });
 
@@ -82,10 +94,11 @@ impl Atomic {
         self.obj.branch(Action::Store);
 
         super::synchronize(|execution| {
-            self.obj
-                .atomic_mut(&mut execution.objects)
-                .unwrap()
-                .store(&mut execution.threads, order)
+            self.obj.atomic_mut(&mut execution.objects).unwrap().store(
+                &mut execution.threads,
+                order,
+                execution.bump,
+            )
         })
     }
 
@@ -101,6 +114,7 @@ impl Atomic {
                 &mut execution.threads,
                 success,
                 failure,
+                execution.bump,
             )
         })
     }
@@ -142,16 +156,21 @@ pub(crate) fn fence(order: Ordering) {
     });
 }
 
-impl State {
-    pub(super) fn last_dependent_access(&self) -> Option<&Access> {
+impl<'bump> State<'bump> {
+    pub(super) fn last_dependent_access(&self) -> Option<&Access<'bump>> {
         self.last_access.as_ref()
     }
 
-    pub(super) fn set_last_access(&mut self, path_id: usize, version: &VersionVec) {
-        Access::set_or_create(&mut self.last_access, path_id, version);
+    pub(super) fn set_last_access(
+        &mut self,
+        path_id: usize,
+        version: &VersionVec<'_>,
+        bump: &'bump Bump,
+    ) {
+        Access::set_or_create_in(&mut self.last_access, path_id, version, bump);
     }
 
-    fn load(&mut self, path: &mut Path, threads: &mut thread::Set, order: Ordering) -> usize {
+    fn load(&mut self, path: &mut Path, threads: &mut thread::Set<'_>, order: Ordering) -> usize {
         // Pick a store that satisfies causality and specified ordering.
         let index = self.history.pick_store(path, threads, order);
 
@@ -160,10 +179,10 @@ impl State {
         index
     }
 
-    fn store(&mut self, threads: &mut thread::Set, order: Ordering) {
+    fn store(&mut self, threads: &mut thread::Set<'_>, order: Ordering, bump: &'bump Bump) {
         let mut store = Store {
-            sync: Synchronize::new(threads.max()),
-            first_seen: FirstSeen::new(threads),
+            sync: Synchronize::new(threads.max(), bump),
+            first_seen: FirstSeen::new(threads, bump),
             seq_cst: is_seq_cst(order),
         };
 
@@ -174,9 +193,10 @@ impl State {
     fn rmw<F, E>(
         &mut self,
         f: F,
-        threads: &mut thread::Set,
+        threads: &mut thread::Set<'_>,
         success: Ordering,
         failure: Ordering,
+        bump: &'bump Bump,
     ) -> Result<usize, E>
     where
         F: FnOnce(usize) -> Result<(), E>,
@@ -193,8 +213,8 @@ impl State {
 
         let mut new = Store {
             // Clone the previous sync in order to form a release sequence.
-            sync: self.history.stores[index].sync.clone(),
-            first_seen: FirstSeen::new(threads),
+            sync: self.history.stores[index].sync.clone_in(bump),
+            first_seen: FirstSeen::new(threads, bump),
             seq_cst: is_seq_cst(success),
         };
 
@@ -204,7 +224,7 @@ impl State {
         Ok(index)
     }
 
-    fn happens_before(&self, vv: &VersionVec) {
+    fn happens_before(&self, vv: &VersionVec<'_>) {
         assert!({
             self.history
                 .stores
@@ -214,11 +234,11 @@ impl State {
     }
 }
 
-impl History {
+impl History<'_> {
     fn pick_store(
         &mut self,
         path: &mut rt::Path,
-        threads: &mut thread::Set,
+        threads: &mut thread::Set<'_>,
         order: Ordering,
     ) -> usize {
         let mut in_causality = false;
@@ -253,15 +273,15 @@ impl History {
     }
 }
 
-impl FirstSeen {
-    fn new(threads: &mut thread::Set) -> FirstSeen {
-        let mut first_seen = FirstSeen(vec![]);
+impl<'bump> FirstSeen<'bump> {
+    fn new(threads: &mut thread::Set<'_>, bump: &'bump Bump) -> FirstSeen<'bump> {
+        let mut first_seen = FirstSeen(BumpVec::with_capacity_in(threads.max(), bump));
         first_seen.touch(threads);
 
         first_seen
     }
 
-    fn touch(&mut self, threads: &thread::Set) {
+    fn touch(&mut self, threads: &thread::Set<'_>) {
         let happens_before = &threads.active().causality;
 
         if self.0.len() < happens_before.len() {
@@ -273,7 +293,7 @@ impl FirstSeen {
         }
     }
 
-    fn is_seen_by_current(&self, threads: &thread::Set) -> bool {
+    fn is_seen_by_current(&self, threads: &thread::Set<'_>) -> bool {
         for (thread_id, version) in threads.active().causality.versions(threads.execution_id()) {
             let seen = self
                 .0
@@ -290,7 +310,7 @@ impl FirstSeen {
         false
     }
 
-    fn is_seen_before_yield(&self, threads: &thread::Set) -> bool {
+    fn is_seen_before_yield(&self, threads: &thread::Set<'_>) -> bool {
         let thread_id = threads.active_id();
 
         let last_yield = match threads.active().last_yield {
