@@ -1,6 +1,7 @@
 #![doc(html_root_url = "https://docs.rs/loom/0.3.6")]
 #![deny(missing_debug_implementations, missing_docs, rust_2018_idioms)]
 #![cfg_attr(loom_nightly, feature(track_caller))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! Loom is a tool for testing concurrent programs.
 //!
@@ -123,6 +124,7 @@ macro_rules! if_futures {
     ($($t:tt)*) => {
         cfg_if::cfg_if! {
             if #[cfg(feature = "futures")] {
+                #[cfg_attr(docsrs, doc(cfg(feature = "futures")))]
                 $($t)*
             }
         }

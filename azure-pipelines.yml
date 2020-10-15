@@ -11,3 +11,9 @@ jobs:
 
 # Run tests
 - template: ci/azure-test-all.yml
+
+# Check doc generation
+- template: ci/azure-check-docs.yml
+  parameters:
+    rust: nightly
+    name: docs
