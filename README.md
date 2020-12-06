@@ -98,6 +98,11 @@ Then, elsewhere in the library:
 use crate::sync::AtomicUsize;
 ```
 
+If you have any dependencies in your project which also use `loom`, you may wish to choose a cfg flag 
+with a project specific flag to avoid conflicts with their use of loom. For 
+example use `my_project_loom`, `#[cfg(my_project_loom)]` and 
+`RUSTFLAGS="--cfg my_project_loom"`.
+
 ### Handling Loom API differences.
 
 If your library must use Loom APIs that differ from `std` types, then the
