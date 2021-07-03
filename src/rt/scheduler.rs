@@ -30,8 +30,8 @@ struct State<'a> {
 
 impl Scheduler {
     /// Create an execution
-    pub(crate) fn new(capacity: usize) -> Scheduler {
-        let threads = spawn_threads(capacity);
+    pub(crate) fn new(capacity: usize, stack_size: usize) -> Scheduler {
+        let threads = spawn_threads(capacity, stack_size);
 
         Scheduler {
             threads,
@@ -130,10 +130,10 @@ impl fmt::Debug for Scheduler {
     }
 }
 
-fn spawn_threads(n: usize) -> Vec<Thread> {
+fn spawn_threads(n: usize, stack_size: usize) -> Vec<Thread> {
     (0..n)
         .map(|_| {
-            let mut g = Gn::new(move || {
+            let mut g = Gn::new_opt(stack_size, move || {
                 loop {
                     let f: Option<Box<dyn FnOnce()>> = generator::yield_(()).unwrap();
                     generator::yield_with(());

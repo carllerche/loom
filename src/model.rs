@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 const DEFAULT_MAX_THREADS: usize = 4;
 const DEFAULT_MAX_BRANCHES: usize = 1_000;
+const DEFAULT_STACK_SIZE: usize = 0x1000;
 
 /// Configure a model
 #[derive(Debug)]
@@ -36,6 +37,11 @@ pub struct Builder {
     ///
     /// Defaults to `LOOM_MAX_PREEMPTIONS` environment variable.
     pub preemption_bound: Option<usize>,
+
+    /// Maximum stack size per thread (as number of machine words)
+    ///
+    /// Defaults to `LOOM_MAX_STACK_SIZE` environment variable.
+    pub stack_size: usize,
 
     /// When doing an exhaustive check, uses the file to store and load the
     /// check progress
@@ -117,6 +123,14 @@ impl Builder {
             })
             .ok();
 
+        let stack_size = env::var("LOOM_MAX_STACK_SIZE")
+            .map(|v| {
+                v.parse()
+                    .ok()
+                    .expect("invalid value for `LOOM_MAX_STACK_SIZE`")
+            })
+            .unwrap_or(DEFAULT_STACK_SIZE);
+
         let checkpoint_file = env::var("LOOM_CHECKPOINT_FILE")
             .map(|v| {
                 v.parse()
@@ -131,6 +145,7 @@ impl Builder {
             max_duration,
             max_permutations,
             preemption_bound,
+            stack_size,
             checkpoint_file,
             checkpoint_interval,
             location,
@@ -152,7 +167,7 @@ impl Builder {
     {
         let mut execution =
             Execution::new(self.max_threads, self.max_branches, self.preemption_bound);
-        let mut scheduler = Scheduler::new(self.max_threads);
+        let mut scheduler = Scheduler::new(self.max_threads, self.stack_size);
 
         if let Some(ref path) = self.checkpoint_file {
             if path.exists() {
