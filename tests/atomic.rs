@@ -108,3 +108,39 @@ fn compare_and_swap_reads_old_values() {
         }
     });
 }
+
+#[test]
+#[should_panic]
+fn atomic_load_on_drop_in_panic_crashes() {
+    struct AtomicLoadOnDrop(AtomicUsize);
+
+    impl AtomicLoadOnDrop {
+        fn new() -> Self {
+            Self(AtomicUsize::new(0))
+        }
+    }
+
+    impl Drop for AtomicLoadOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.load(SeqCst);
+        }
+    }
+
+    loom::model(|| {
+        let a = AtomicLoadOnDrop::new();
+
+        // Moving `AtomicLoadOnDrop` into a thread will trigger `drop` when the
+        // thread is dropped.
+        thread::spawn(move || {
+            let _a = a;
+        });
+
+        // Panic the parent thread.
+        //
+        // Without a fix, the `AtomicLoadOnDrop` drops _after_ the
+        // `loom::rt::scheduler::STATE` thread local is dropped. Since atomics
+        // use `STATE` to track accesses, dropping `AtomicLoadOnDrop` causes an
+        // access to an unset `RefCell`.
+        panic!();
+    });
+}
