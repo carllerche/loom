@@ -1,6 +1,8 @@
 use loom::sync::{Arc, RwLock};
 use loom::thread;
 
+use std::rc::Rc;
+
 #[test]
 fn rwlock_read_one() {
     loom::model(|| {
@@ -73,4 +75,28 @@ fn rwlock_try_write() {
 
         assert!(lock.try_write().is_err());
     });
+}
+
+#[test]
+fn rwlock_into_inner() {
+    loom::model(|| {
+        let lock = Rc::new(RwLock::new(0));
+
+        let ths: Vec<_> = (0..2)
+            .map(|_| {
+                let lock = lock.clone();
+
+                thread::spawn(move || {
+                    *lock.write().unwrap() += 1;
+                })
+            })
+            .collect();
+
+        for th in ths {
+            th.join().unwrap();
+        }
+
+        let lock = Rc::try_unwrap(lock).unwrap().into_inner().unwrap();
+        assert_eq!(lock, 2);
+    })
 }

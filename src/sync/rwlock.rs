@@ -104,7 +104,7 @@ impl<T> RwLock<T> {
 
     /// Consumes this `RwLock`, returning the underlying data.
     pub fn into_inner(self) -> LockResult<T> {
-        unimplemented!()
+        Ok(self.data.into_inner().expect("loom::RwLock state corrupt"))
     }
 }
 

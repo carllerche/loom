@@ -67,3 +67,27 @@ fn mutex_establishes_seq_cst() {
         }
     });
 }
+
+#[test]
+fn mutex_into_inner() {
+    loom::model(|| {
+        let lock = Rc::new(Mutex::new(0));
+
+        let ths: Vec<_> = (0..2)
+            .map(|_| {
+                let lock = lock.clone();
+
+                thread::spawn(move || {
+                    *lock.lock().unwrap() += 1;
+                })
+            })
+            .collect();
+
+        for th in ths {
+            th.join().unwrap();
+        }
+
+        let lock = Rc::try_unwrap(lock).unwrap().into_inner().unwrap();
+        assert_eq!(lock, 2);
+    })
+}
