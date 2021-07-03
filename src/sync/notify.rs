@@ -26,7 +26,7 @@ impl Notify {
         }
     }
 
-    /// Notify the watier
+    /// Notify the waiter
     pub fn notify(&self) {
         self.object.notify();
     }

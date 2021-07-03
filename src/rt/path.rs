@@ -163,7 +163,7 @@ impl Path {
 
         let load = object::Ref::from_usize(self.pos)
             .downcast::<Load>(&self.branches)
-            .expect("Reached unexpected exploration state. Is the model fully determistic?")
+            .expect("Reached unexpected exploration state. Is the model fully deterministic?")
             .get(&self.branches);
 
         self.pos += 1;
@@ -181,7 +181,7 @@ impl Path {
 
         let spurious = object::Ref::from_usize(self.pos)
             .downcast::<Spurious>(&self.branches)
-            .expect("Reached unexpected exploration state. Is the model fully determistic?")
+            .expect("Reached unexpected exploration state. Is the model fully deterministic?")
             .get(&self.branches)
             .0;
 
@@ -271,7 +271,7 @@ impl Path {
 
         let schedule = object::Ref::from_usize(self.pos)
             .downcast::<Schedule>(&self.branches)
-            .expect("Reached unexpected exploration state. Is the model fully determistic?")
+            .expect("Reached unexpected exploration state. Is the model fully deterministic?")
             .get(&self.branches);
 
         self.pos += 1;

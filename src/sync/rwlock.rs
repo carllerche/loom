@@ -3,7 +3,7 @@ use crate::rt;
 use std::ops;
 use std::sync::{LockResult, TryLockError, TryLockResult};
 
-/// Mock implementatoin of `std::sync::RwLock`
+/// Mock implementation of `std::sync::RwLock`
 #[derive(Debug)]
 pub struct RwLock<T> {
     object: rt::RwLock,

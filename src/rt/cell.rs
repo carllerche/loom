@@ -18,7 +18,7 @@ pub(super) struct State {
     /// `true` if in a `with_mut` closure.
     is_writing: bool,
 
-    /// The transitive closure of all immutable accessses of `data`.
+    /// The transitive closure of all immutable accesses of `data`.
     read_access: VersionVec,
 
     /// Location for the *last* time a thread read from the cell.
@@ -167,7 +167,7 @@ impl State {
                 .fire();
         }
 
-        // Check that there are no concurrent immutable accesss, i.e., every
+        // Check that there are no concurrent immutable accesses, i.e., every
         // immutable access must happen-before this mutable access.
         if let Some(reader) = current.ahead(&self.read_access) {
             location::panic(

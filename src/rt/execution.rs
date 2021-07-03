@@ -266,7 +266,7 @@ impl Id {
         use std::sync::atomic::AtomicUsize;
         use std::sync::atomic::Ordering::Relaxed;
 
-        // The number picked here is arbitrary. It is mostly to avoid colission
+        // The number picked here is arbitrary. It is mostly to avoid collision
         // with "zero" to aid with debugging.
         static NEXT_ID: AtomicUsize = AtomicUsize::new(46_413_762);
 

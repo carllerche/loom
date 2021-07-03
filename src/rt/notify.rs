@@ -16,7 +16,7 @@ pub(super) struct State {
     /// True if the notify woke up spuriously last time
     did_spur: bool,
 
-    /// When true, notification is sequentiall consistent.
+    /// When true, notification is sequential consistent.
     seq_cst: bool,
 
     /// `true` if there is a pending notification to consume.

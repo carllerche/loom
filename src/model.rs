@@ -59,7 +59,7 @@ pub struct Builder {
 
     /// Log execution output to stdout.
     ///
-    /// Defaults to existance of `LOOM_LOG` environment variable.
+    /// Defaults to existence of `LOOM_LOG` environment variable.
     pub log: bool,
 
     // Support adding more fields in the future
