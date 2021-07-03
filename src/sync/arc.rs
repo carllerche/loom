@@ -29,9 +29,8 @@ impl<T> Arc<T> {
     }
 
     /// Gets the number of strong (`Arc`) pointers to this value.
-    pub fn strong_count(_this: &Self) -> usize {
-        unimplemented!("no tests checking this? DELETED!")
-        // this.inner.ref_cnt.load(SeqCst)
+    pub fn strong_count(this: &Self) -> usize {
+        this.inner.obj.strong_count()
     }
 
     /// Returns a mutable reference to the inner value, if there are
