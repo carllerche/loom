@@ -1,3 +1,7 @@
+#[macro_use]
+mod location;
+pub(crate) use self::location::Location;
+
 mod access;
 use self::access::Access;
 
@@ -9,10 +13,6 @@ pub(crate) use self::arc::Arc;
 
 mod atomic;
 pub(crate) use self::atomic::{fence, Atomic};
-
-#[macro_use]
-mod location;
-pub(crate) use self::location::Location;
 
 mod cell;
 pub(crate) use self::cell::Cell;
