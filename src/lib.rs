@@ -378,6 +378,7 @@ mod rt;
 pub use rt::MAX_THREADS;
 
 pub mod alloc;
+pub mod boxed;
 pub mod cell;
 pub mod hint;
 pub mod lazy_static;
