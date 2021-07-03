@@ -15,7 +15,7 @@ mod location;
 pub(crate) use self::location::Location;
 
 mod cell;
-pub(crate) use self::cell::Cell;
+pub(crate) use self::cell::{Cell, CellMutToken, CellRefToken};
 
 mod condvar;
 pub(crate) use self::condvar::Condvar;

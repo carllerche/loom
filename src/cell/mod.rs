@@ -2,4 +2,4 @@
 
 mod unsafe_cell;
 
-pub use self::unsafe_cell::UnsafeCell;
+pub use self::unsafe_cell::{UnsafeCell, UnsafeCellMutToken, UnsafeCellRefToken};

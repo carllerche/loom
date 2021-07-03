@@ -7,6 +7,18 @@ pub(crate) struct Cell {
     state: object::Ref<State>,
 }
 
+/// Tracks immutable access to `Cell`
+#[derive(Debug)]
+pub(crate) struct CellRefToken {
+    state: object::Ref<State>,
+}
+
+/// Tracks mutable access to `Cell`
+#[derive(Debug)]
+pub(crate) struct CellMutToken {
+    state: object::Ref<State>,
+}
+
 #[derive(Debug)]
 pub(super) struct State {
     /// Where the cell was created
@@ -43,78 +55,94 @@ impl Cell {
     }
 
     pub(crate) fn with<R>(&self, location: Location, f: impl FnOnce() -> R) -> R {
-        struct Reset {
-            state: object::Ref<State>,
-        }
-
-        impl Drop for Reset {
-            fn drop(&mut self) {
-                rt::execution(|execution| {
-                    let state = self.state.get_mut(&mut execution.objects);
-
-                    assert!(state.is_reading > 0);
-                    assert!(!state.is_writing);
-
-                    state.is_reading -= 1;
-
-                    if !std::thread::panicking() {
-                        state.track_read(&execution.threads);
-                    }
-                })
-            }
-        }
-
         // Enter the read closure
-        let _reset = rt::synchronize(|execution| {
-            let state = self.state.get_mut(&mut execution.objects);
-
-            assert!(!state.is_writing, "currently writing to cell");
-
-            state.is_reading += 1;
-            state.read_locations.track(location, &execution.threads);
-            state.track_read(&execution.threads);
-
-            Reset { state: self.state }
-        });
+        let _token = CellRefToken::new(self.state, location);
 
         f()
     }
 
     pub(crate) fn with_mut<R>(&self, location: Location, f: impl FnOnce() -> R) -> R {
-        struct Reset(object::Ref<State>);
-
-        impl Drop for Reset {
-            fn drop(&mut self) {
-                rt::execution(|execution| {
-                    let state = self.0.get_mut(&mut execution.objects);
-
-                    assert!(state.is_writing);
-                    assert!(state.is_reading == 0);
-
-                    state.is_writing = false;
-
-                    if !std::thread::panicking() {
-                        state.track_write(&execution.threads);
-                    }
-                })
-            }
-        }
-
-        // Enter the read closure
-        let _reset = rt::synchronize(|execution| {
-            let state = self.state.get_mut(&mut execution.objects);
-
-            assert!(state.is_reading == 0, "currently reading from cell");
-            assert!(!state.is_writing, "currently writing to cell");
-
-            state.is_writing = true;
-            state.write_locations.track(location, &execution.threads);
-            state.track_write(&execution.threads);
-
-            Reset(self.state)
-        });
+        // Enter the write closure
+        let _token = CellMutToken::new(self.state, location);
 
         f()
+    }
+
+    pub(crate) fn guard_ref_access(&self, location: Location) -> CellRefToken {
+        CellRefToken::new(self.state, location)
+    }
+
+    pub(crate) fn guard_mut_access(&self, location: Location) -> CellMutToken {
+        CellMutToken::new(self.state, location)
+    }
+}
+
+impl CellRefToken {
+    fn new(state: object::Ref<State>, location: Location) -> Self {
+        rt::synchronize(|execution| {
+            let state_obj = state.get_mut(&mut execution.objects);
+
+            assert!(!state_obj.is_writing, "currently writing to cell");
+
+            state_obj.is_reading += 1;
+            state_obj.read_locations.track(location, &execution.threads);
+            state_obj.track_read(&execution.threads);
+
+            Self { state }
+        })
+    }
+}
+
+impl Drop for CellRefToken {
+    fn drop(&mut self) {
+        rt::execution(|execution| {
+            let state_obj = self.state.get_mut(&mut execution.objects);
+
+            assert!(state_obj.is_reading > 0);
+            assert!(!state_obj.is_writing);
+
+            state_obj.is_reading -= 1;
+
+            if !std::thread::panicking() {
+                state_obj.track_read(&execution.threads);
+            }
+        })
+    }
+}
+
+impl CellMutToken {
+    fn new(state: object::Ref<State>, location: Location) -> Self {
+        rt::synchronize(|execution| {
+            let state_obj = state.get_mut(&mut execution.objects);
+
+            assert!(state_obj.is_reading == 0, "currently reading from cell");
+            assert!(!state_obj.is_writing, "currently writing to cell");
+
+            state_obj.is_writing = true;
+            state_obj
+                .write_locations
+                .track(location, &execution.threads);
+            state_obj.track_write(&execution.threads);
+
+            Self { state }
+        })
+    }
+}
+
+impl Drop for CellMutToken {
+    fn drop(&mut self) {
+        rt::execution(|execution| {
+            let state_obj = self.state.get_mut(&mut execution.objects);
+
+            assert!(state_obj.is_writing);
+            assert!(state_obj.is_reading == 0);
+
+            state_obj.is_writing = false;
+
+            if !std::thread::panicking() {
+                state_obj.track_write(&execution.threads);
+            }
+        })
     }
 }
 
