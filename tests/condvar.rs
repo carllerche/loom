@@ -40,6 +40,22 @@ fn notify_all() {
     });
 }
 
+#[test]
+fn wait_while() {
+    loom::model(|| {
+        let inc = Arc::new(Inc::new());
+
+        let j = {
+            let inc = inc.clone();
+            thread::spawn(move || inc.wait_for_1())
+        };
+
+        thread::spawn(move || inc.inc()).join().expect("inc");
+
+        j.join().expect("waiter")
+    });
+}
+
 struct Inc {
     num: AtomicUsize,
     mutex: Mutex<()>,
@@ -66,6 +82,16 @@ impl Inc {
 
             guard = self.condvar.wait(guard).unwrap();
         }
+    }
+
+    fn wait_for_1(&self) {
+        let guard = self.mutex.lock().unwrap();
+
+        drop(
+            self.condvar
+                .wait_while(guard, |_| self.num.load(SeqCst) < 1)
+                .unwrap(),
+        );
     }
 
     fn inc(&self) {

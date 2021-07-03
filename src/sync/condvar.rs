@@ -38,6 +38,22 @@ impl Condvar {
         Ok(guard)
     }
 
+    /// Blocks the current thread until this condition variable receives a
+    /// notification and the given condition returns false.
+    pub fn wait_while<'a, T, F>(
+        &self,
+        mut guard: MutexGuard<'a, T>,
+        mut condition: F,
+    ) -> LockResult<MutexGuard<'a, T>>
+    where
+        F: FnMut(&mut T) -> bool,
+    {
+        while condition(&mut *guard) {
+            guard = self.wait(guard)?;
+        }
+        Ok(guard)
+    }
+
     /// Waits on this condition variable for a notification, timing out after a
     /// specified duration.
     pub fn wait_timeout<'a, T>(
